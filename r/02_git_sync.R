@@ -7,7 +7,7 @@ sync_github <- function(
     nombre_user = NULL,
     nombre_repo = NULL,
     rama        = "main",
-    mensaje     = paste0("update: Adición de la explicación del proyecto con archivo README.md", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
+    mensaje     = paste0("update: Adición de la explicación del proyecto con archivo README.md ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
 ) {
   old_wd <- getwd(); on.exit(setwd(old_wd))
   setwd(path_base)

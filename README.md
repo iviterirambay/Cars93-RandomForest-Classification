@@ -25,6 +25,7 @@ RandomForest_Cars93/
 ├── r/
 │   ├── 00_conn_r_git.R          # Configuración de conexión R–GitHub
 │   └── 01_Cars93.R              # Pipeline completo: EDA → Modelo → Evaluación → Exportación
+│   └── 02_git_sync.R            # Actualizaciones a GitHub
 ├── informe/
 │   ├── RandomForest_Cars93_Final.Rmd   # Informe reproducible en R Markdown
 │   └── RandomForest_Cars93_Final.pdf  # Informe compilado en PDF
