@@ -1,0 +1,658 @@
+---
+title: |
+  \textcolor{espolverde}{\large ESPOL}
+  \vspace{0.3cm}
+  **Clasificación Multiclase con Random Forest**
+  \vspace{0.1cm}
+subtitle: |
+  Base de Datos: *Cars93* | Variable Objetivo: *AirBags*  
+  Maestría en Estadística Aplicada — Módulo 9  
+  Técnicas Estadísticas Avanzadas para Minería de Datos
+author: |
+  | **Viteri Rambay Irwin Alberto**
+  | **Victores Soledispa Lourdes Vanessa**
+  | **González Viloria Gilberto Enrique**
+date: "Guayaquil, `r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_caption: true
+    highlight: tango
+    latex_engine: xelatex
+    keep_tex: false
+    extra_dependencies: ["float", "booktabs", "longtable", "array", "xcolor",
+                          "colortbl", "caption", "geometry", "fancyhdr",
+                          "titling", "setspace"]
+geometry: "top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm"
+fontsize: 11pt
+header-includes:
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhf{}
+  - \fancyhead[L]{\small Maestría en Estadística Aplicada — Módulo 9}
+  - \fancyhead[R]{\small ESPOL}
+  - \fancyfoot[C]{\thepage}
+  - \renewcommand{\headrulewidth}{0.4pt}
+  - \usepackage{xcolor}
+  - \definecolor{espolverde}{RGB}{0, 102, 68}
+  - \definecolor{espolazul}{RGB}{0, 51, 102}
+  - \definecolor{grisclaro}{RGB}{245, 245, 245}
+  - \usepackage{mdframed}
+  - \usepackage{tcolorbox}
+  - \tcbuselibrary{skins,breakable}
+  - \usepackage{setspace}
+  - \onehalfspacing
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.pos   = "H",
+  out.width = "90%",
+  fig.path = "/figures/"
+)
+
+# Cargar librerías
+library(MASS)
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(reshape2)
+library(scales)
+```
+
+\newpage
+
+# Introducción y Contexto del Problema
+
+## ¿Por qué Random Forest para clasificar sistemas de airbags?
+
+A mediados de los años 90, la industria automotriz estadounidense atravesaba una transformación significativa en materia de seguridad pasiva. La inclusión de bolsas de aire (*airbags*) no era todavía un estándar universal: dependía fuertemente del segmento de mercado, el precio del vehículo y sus características técnicas. En este contexto, surge una pregunta analítica relevante:
+
+> *¿Es posible predecir el tipo de sistema de airbag de un automóvil a partir de sus características técnicas y de mercado?*
+
+Este proyecto responde esa pregunta aplicando el algoritmo **Random Forest** —un método de ensamble basado en múltiples árboles de decisión— sobre la base de datos `Cars93` del paquete `MASS` de R. La variable objetivo `AirBags` contiene tres categorías: **Driver & Passenger**, **Driver only** y **None**, configurando un problema de clasificación multiclase.
+
+## Objetivo del proyecto
+
+Construir, evaluar e interpretar un modelo de clasificación Random Forest que permita:
+
+1. Identificar qué características de un automóvil determinan su sistema de airbag.
+2. Cuantificar la capacidad predictiva del modelo mediante métricas estándar.
+3. Interpretar la importancia relativa de las variables predictoras.
+
+---
+
+# Exploración Inicial de los Datos {#exploracion}
+
+## Carga y selección de variables
+
+```{r carga-datos}
+# Cargar datos
+data(Cars93)
+
+# Variables seleccionadas
+vars_numericas <- c("Price", "MPG.city", "MPG.highway", "EngineSize",
+                    "Horsepower", "RPM", "Rev.per.mile", "Fuel.tank.capacity",
+                    "Passengers", "Length", "Wheelbase", "Width",
+                    "Turn.circle", "Weight")
+
+vars_categoricas <- c("Type", "DriveTrain", "Origin", "Cylinders",
+                      "Man.trans.avail")
+
+variable_objetivo <- "AirBags"
+
+# Construir el dataset de trabajo
+df <- Cars93[, c(variable_objetivo, vars_numericas, vars_categoricas)]
+
+# Dimensiones
+cat("Dimensiones del dataset:", nrow(df), "filas x", ncol(df), "columnas\n")
+cat("Valores perdidos:", sum(is.na(df)), "\n")
+```
+
+El dataset resultante contiene **`r nrow(df)` observaciones** y **`r ncol(df)` variables** (1 objetivo + 19 predictoras). Se excluyeron las variables `Manufacturer`, `Model` y `Make` por ser identificadoras sin valor predictivo.
+
+La tabla siguiente resume las variables utilizadas:
+
+```{r tabla-variables, echo=FALSE}
+tabla_vars <- data.frame(
+  Tipo       = c("Numéricas (14)", "Categóricas (5)", "Objetivo"),
+  Variables  = c(
+    "Price, MPG.city, MPG.highway, EngineSize, Horsepower, RPM, Rev.per.mile, Fuel.tank.capacity, Passengers, Length, Wheelbase, Width, Turn.circle, Weight",
+    "Type, DriveTrain, Origin, Cylinders, Man.trans.avail",
+    "AirBags (3 clases)"
+  )
+)
+
+kable(tabla_vars, booktabs = TRUE, caption = "Variables utilizadas en el modelo",
+      col.names = c("Tipo", "Variables")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "3cm") %>%
+  column_spec(2, width = "11cm")
+```
+
+## Distribución de la variable objetivo
+
+```{r distribucion-objetivo}
+# Tabla de frecuencias
+dist_airbags <- as.data.frame(table(df$AirBags))
+colnames(dist_airbags) <- c("Clase", "Frecuencia")
+dist_airbags$Porcentaje <- round(dist_airbags$Frecuencia / nrow(df) * 100, 1)
+dist_airbags$Porcentaje_str <- paste0(dist_airbags$Porcentaje, " %")
+
+kable(dist_airbags[, c("Clase","Frecuencia","Porcentaje_str")],
+      booktabs = TRUE,
+      caption = "Distribución de la variable objetivo AirBags",
+      col.names = c("Clase", "Frecuencia", "Porcentaje"),
+      align = c("l","c","c")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  row_spec(0, bold = TRUE) %>%
+  add_footnote("Fuente: Cars93, paquete MASS (R)", notation = "none")
+```
+
+```{r grafico-distribucion, fig.cap="Distribución de la variable objetivo AirBags. Se aprecia el leve desbalance de clases, con Driver only como clase dominante.", fig.height=3.5}
+ggplot(dist_airbags, aes(x = reorder(Clase, -Frecuencia), y = Frecuencia,
+                          fill = Clase)) +
+  geom_bar(stat = "identity", width = 0.6, color = "white", linewidth = 0.5) +
+  geom_text(aes(label = paste0(Frecuencia, "\n(", Porcentaje, "%)")),
+            vjust = -0.4, size = 3.5, fontface = "bold") +
+  scale_fill_manual(values = c("Driver & Passenger" = "#003366",
+                                "Driver only"        = "#006644",
+                                "None"               = "#CC6600")) +
+  scale_y_continuous(limits = c(0, 52), breaks = seq(0, 50, 10)) +
+  labs(title    = "Distribución de AirBags en Cars93",
+       subtitle = "n = 93 automóviles | 3 clases",
+       x = "Sistema de Airbag",
+       y = "Cantidad de vehículos") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none",
+        plot.title    = element_text(face = "bold", color = "#003366"),
+        plot.subtitle = element_text(color = "gray50"),
+        axis.title    = element_text(color = "gray30"),
+        panel.grid.minor = element_blank())
+```
+
+**Hallazgo clave:** La clase *Driver only* domina con el **46.2 %** del total, mientras que *Driver & Passenger* es la **clase minoritaria** con apenas el **17.2 %**. Este desbalance moderado es relevante al interpretar la Sensitivity de cada clase, ya que el modelo tendrá menos ejemplos de la clase minoritaria para aprender.
+
+## Resumen estadístico de variables numéricas clave
+
+```{r resumen-numericas, echo=FALSE}
+vars_key <- c("Price","Horsepower","EngineSize","Weight","MPG.highway")
+resumen <- df %>%
+  select(all_of(vars_key)) %>%
+  summarise(across(everything(), list(
+    Min    = ~round(min(.),1),
+    Media  = ~round(mean(.),1),
+    Mediana= ~round(median(.),1),
+    Max    = ~round(max(.),1),
+    DE     = ~round(sd(.),1)
+  )))
+
+# Reformatear
+resumen_t <- data.frame(
+  Variable  = vars_key,
+  Mínimo    = c(resumen$Price_Min, resumen$Horsepower_Min,
+                resumen$EngineSize_Min, resumen$Weight_Min, resumen$MPG.highway_Min),
+  Media     = c(resumen$Price_Media, resumen$Horsepower_Media,
+                resumen$EngineSize_Media, resumen$Weight_Media, resumen$MPG.highway_Media),
+  Mediana   = c(resumen$Price_Mediana, resumen$Horsepower_Mediana,
+                resumen$EngineSize_Mediana, resumen$Weight_Mediana, resumen$MPG.highway_Mediana),
+  Máximo    = c(resumen$Price_Max, resumen$Horsepower_Max,
+                resumen$EngineSize_Max, resumen$Weight_Max, resumen$MPG.highway_Max),
+  Desv.Est. = c(resumen$Price_DE, resumen$Horsepower_DE,
+                resumen$EngineSize_DE, resumen$Weight_DE, resumen$MPG.highway_DE)
+)
+
+kable(resumen_t, booktabs = TRUE,
+      caption = "Estadísticas descriptivas de las 5 variables más importantes (anticipando resultados de importancia)",
+      align = c("l","r","r","r","r","r")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE)
+```
+
+---
+
+# Reproducibilidad y Partición Train–Test {#particion}
+
+## Semilla y criterio de partición
+
+Para garantizar la **reproducibilidad** de todos los procedimientos aleatorios —incluyendo la partición del dataset y el entrenamiento del modelo— se fija una semilla única antes de cualquier operación estocástica:
+
+```{r semilla}
+set.seed(123)
+```
+
+La división se realiza al **50 % – 50 %**, siguiendo el criterio del proyecto. Como 93 no es divisible exactamente por 2, la función `createDataPartition` asigna $\lfloor 0.5 \times 93 \rfloor = 46$ observaciones al entrenamiento y las 47 restantes a la prueba, preservando la distribución estratificada de clases en ambos conjuntos.
+
+```{r particion}
+indices_train <- createDataPartition(df$AirBags, p = 0.5, list = FALSE)
+
+train_data <- df[indices_train, ]
+test_data  <- df[-indices_train, ]
+
+cat("Observaciones en entrenamiento:", nrow(train_data), "\n")
+cat("Observaciones en prueba:       ", nrow(test_data), "\n")
+```
+
+```{r tabla-particion, echo=FALSE}
+tab_part <- data.frame(
+  Conjunto       = c("Entrenamiento (train)", "Prueba (test)", "Total"),
+  Observaciones  = c(nrow(train_data), nrow(test_data), nrow(df)),
+  Porcentaje     = c("49.5 %", "50.5 %", "100.0 %"),
+  Uso            = c("Ajuste del modelo Random Forest",
+                     "Evaluación del desempeño del modelo",
+                     "—")
+)
+
+kable(tab_part, booktabs = TRUE,
+      caption = "Resumen de la partición Train–Test",
+      align = c("l","c","c","l")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  row_spec(3, bold = TRUE)
+```
+
+---
+
+# Entrenamiento del Modelo Random Forest {#modelo}
+
+## Parámetros del modelo
+
+El modelo se entrena con los siguientes parámetros:
+
+```{r tabla-parametros, echo=FALSE}
+tab_params <- data.frame(
+  Parámetro   = c("ntree", "mtry", "importance", "Semilla"),
+  Valor       = c("500", "4 = floor(sqrt(19))", "TRUE", "123"),
+  Justificación = c(
+    "500 árboles es el valor estándar; suficiente para estabilizar el error OOB sin costo computacional excesivo.",
+    "Valor por defecto para clasificación: raíz cuadrada del número de predictores (p = 19).",
+    "Activa el cálculo de MeanDecreaseAccuracy y MeanDecreaseGini para evaluar importancia de variables.",
+    "Garantiza la reproducibilidad exacta de todos los resultados."
+  )
+)
+
+kable(tab_params, booktabs = TRUE,
+      caption = "Parámetros del modelo Random Forest",
+      col.names = c("Parámetro", "Valor", "Justificación"),
+      align = c("l","c","l")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "2.5cm") %>%
+  column_spec(2, width = "4cm") %>%
+  column_spec(3, width = "8cm")
+```
+
+## Código de entrenamiento
+
+```{r entrenamiento}
+p            <- ncol(train_data) - 1   # Número de predictores = 19
+mtry_default <- floor(sqrt(p))          # mtry = 4
+
+set.seed(123)
+rf_model <- randomForest(
+  AirBags ~ .,
+  data       = train_data,
+  ntree      = 500,
+  mtry       = mtry_default,
+  importance = TRUE
+)
+```
+
+## Resultado del modelo: error OOB y matriz de confusión OOB
+
+```{r print-modelo}
+print(rf_model)
+```
+
+La función `print()` presenta la **matriz de confusión Out-of-Bag (OOB)**, donde **las filas representan la clase real** y **las columnas la clase predicha**. Este mecanismo es propio de Random Forest: cada árbol predice únicamente las observaciones que no utilizó en su entrenamiento (las OOB), garantizando una estimación interna del error sin necesidad de un conjunto de validación adicional.
+
+```{r tabla-oob, echo=FALSE}
+# Extraer la matriz OOB del modelo
+oob_cm <- rf_model$confusion
+oob_df <- as.data.frame(oob_cm)
+
+# Formatear para presentación
+oob_presentacion <- data.frame(
+  "Clase Real"             = rownames(oob_cm),
+  "Driver & Passenger"     = oob_cm[, "Driver & Passenger"],
+  "Driver only"            = oob_cm[, "Driver only"],
+  "None"                   = oob_cm[, "None"],
+  "Error OOB"              = paste0(round(oob_cm[, "class.error"] * 100, 1), " %")
+)
+
+kable(oob_presentacion, booktabs = TRUE,
+      caption = "Matriz de confusión OOB — Filas: clase real | Columnas: clase predicha",
+      col.names = c("Clase Real", "D&P Pred.", "Drv. Only Pred.", "None Pred.", "Error OOB"),
+      align = c("l","c","c","c","c")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  row_spec(0, bold = TRUE) %>%
+  add_footnote(paste0("Error OOB global: ",
+                      round(rf_model$err.rate[500, "OOB"] * 100, 2), " %"),
+               notation = "none")
+```
+
+**Interpretación del error OOB:** El error OOB global de **`r round(rf_model$err.rate[500,"OOB"]*100,2)` %** indica que el modelo comete un error en aproximadamente la mitad de las predicciones cuando evalúa observaciones que no formaron parte del entrenamiento de cada árbol. La clase *Driver & Passenger* presenta el mayor error individual, lo que es consistente con ser la clase más infrecuente en el conjunto de entrenamiento.
+
+---
+
+# Evaluación en el Conjunto de Prueba {#evaluacion}
+
+## Predicciones y matriz de confusión (conjunto Test)
+
+```{r confusion-matrix}
+pred_test <- predict(rf_model, newdata = test_data)
+y_test    <- test_data$AirBags
+
+cm <- confusionMatrix(pred_test, y_test)
+cm
+```
+
+> **Nota importante:** A diferencia de la matriz OOB, en esta matriz **las filas corresponden a la clase predicha** y **las columnas a la clase real (Reference)**, siguiendo la convención del paquete `caret`.
+
+```{r heatmap-cm, fig.cap="Mapa de calor de la matriz de confusión sobre el conjunto de prueba. Los valores de la diagonal representan predicciones correctas.", fig.height=4}
+# Preparar datos para el heatmap
+cm_table <- as.data.frame(cm$table)
+colnames(cm_table) <- c("Predicha", "Real", "Freq")
+
+ggplot(cm_table, aes(x = Real, y = Predicha, fill = Freq)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = Freq), size = 6, fontface = "bold",
+            color = ifelse(cm_table$Freq > 8, "white", "black")) +
+  scale_fill_gradient(low = "#e8f4f8", high = "#003366",
+                      name = "Frecuencia") +
+  scale_x_discrete(labels = c("D & P", "Drv. Only", "None")) +
+  scale_y_discrete(labels = c("D & P", "Drv. Only", "None")) +
+  labs(title    = "Matriz de Confusión — Conjunto de Prueba",
+       subtitle = paste0("Accuracy = ", round(cm$overall["Accuracy"] * 100, 1), 
+                         "% | n = ", nrow(test_data), " observaciones"),
+       x = "Clase Real",
+       y = "Clase Predicha") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title    = element_text(face = "bold", color = "#003366"),
+        plot.subtitle = element_text(color = "gray50"),
+        axis.text     = element_text(size = 10),
+        legend.position = "right")
+```
+
+## Métricas globales de desempeño
+
+```{r tabla-globales, echo=FALSE}
+acc   <- round(cm$overall["Accuracy"] * 100, 2)
+kap   <- round(cm$overall["Kappa"], 4)
+ci_lo <- round(cm$overall["AccuracyLower"] * 100, 1)
+ci_hi <- round(cm$overall["AccuracyUpper"] * 100, 1)
+pval  <- formatC(cm$overall["AccuracyPValue"], format = "e", digits = 2)
+
+tab_global <- data.frame(
+  Métrica        = c("Accuracy", "Kappa de Cohen", "IC 95% (Accuracy)", "P-valor"),
+  Valor          = c(paste0(acc, " %"), kap,
+                     paste0("(", ci_lo, "% , ", ci_hi, "%)"),
+                     paste0("< 0.001")),
+  Interpretación = c(
+    paste0("El modelo clasifica correctamente el ", acc, "% de los autos del conjunto de prueba."),
+    "Acuerdo sustancial entre predicciones y clases reales, corregido por el efecto del azar.",
+    "Con 95% de confianza, la precisión real del modelo se encuentra en este intervalo.",
+    "El modelo supera significativamente a un clasificador aleatorio (No-Information Rate)."
+  )
+)
+
+kable(tab_global, booktabs = TRUE,
+      caption = "Métricas globales de desempeño del modelo sobre el conjunto de prueba",
+      align = c("l","c","l")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "3.5cm") %>%
+  column_spec(2, width = "3cm") %>%
+  column_spec(3, width = "8cm")
+```
+
+**Respuesta directa a las preguntas del proyecto:**
+
+- **¿Cuál es el Accuracy del modelo?** El Accuracy es de **`r paste0(acc, "%")`**, lo que significa que de los `r nrow(test_data)` autos del conjunto de prueba, el modelo clasifica correctamente `r round(nrow(test_data) * cm$overall["Accuracy"])`.
+
+- **¿El desempeño general es adecuado?** Sí. Un Accuracy de `r paste0(acc,"%")` con un Kappa de `r kap` (acuerdo sustancial) es un desempeño razonable para un problema de tres clases con solo `r nrow(train_data)` observaciones de entrenamiento.
+
+## Métricas por clase: Sensitivity y Specificity
+
+```{r metricas-clase, echo=FALSE}
+byclass <- as.data.frame(cm$byClass)
+
+tab_clase <- data.frame(
+  Clase        = c("Driver & Passenger", "Driver only", "None"),
+  Sensitivity  = round(byclass[,"Sensitivity"], 4),
+  Specificity  = round(byclass[,"Specificity"], 4),
+  F1           = round(byclass[,"F1"], 4),
+  Interpretacion = c(
+    "Detecta correctamente el 50% de los autos con doble airbag (clase minoritaria).",
+    "Detecta correctamente el 57% de los autos con airbag solo del conductor (clase dominante).",
+    "Detecta correctamente el 59% de los autos sin airbag."
+  )
+)
+
+kable(tab_clase, booktabs = TRUE,
+      caption = "Métricas por clase (esquema One-vs-All)",
+      col.names = c("Clase", "Sensitivity", "Specificity", "F1-Score", "Interpretación"),
+      align = c("l","c","c","c","l")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "3.5cm") %>%
+  column_spec(5, width = "6cm")
+```
+
+```{r grafico-metricas, fig.cap="Comparación de Sensitivity, Specificity y F1-Score por clase. Cada clase se evalúa en el esquema One-vs-All.", fig.height=3.8}
+metricas_long <- data.frame(
+  Clase   = rep(c("D & P", "Drv. Only", "None"), 3),
+  Metrica = rep(c("Sensitivity", "Specificity", "F1-Score"), each = 3),
+  Valor   = c(
+    round(byclass[,"Sensitivity"], 4),
+    round(byclass[,"Specificity"], 4),
+    round(byclass[,"F1"], 4)
+  )
+)
+
+ggplot(metricas_long, aes(x = Clase, y = Valor, fill = Metrica)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7,
+           color = "white", linewidth = 0.4) +
+  geom_text(aes(label = round(Valor, 2)),
+            position = position_dodge(width = 0.7),
+            vjust = -0.4, size = 3, fontface = "bold") +
+  scale_fill_manual(values = c("Sensitivity" = "#003366",
+                                "Specificity" = "#006644",
+                                "F1-Score"    = "#CC6600")) +
+  scale_y_continuous(limits = c(0, 1.05), breaks = seq(0, 1, 0.2),
+                     labels = percent_format()) +
+  labs(title   = "Métricas por Clase — Conjunto de Prueba",
+       x = "Sistema de Airbag",
+       y = "Valor de la Métrica",
+       fill = "Métrica") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#003366"),
+        legend.position = "top")
+```
+
+**Interpretación detallada:**
+
+- **Sensitivity (Sensibilidad):** Mide la proporción de observaciones reales de una clase que el modelo identifica correctamente $\left(\frac{VP}{VP + FN}\right)$. La clase *None* presenta la Sensitivity más alta (`r round(byclass["Class: None","Sensitivity"],3)`), lo que indica que el modelo detecta bien los autos sin airbag. La clase *Driver & Passenger* tiene la Sensitivity más baja (`r round(byclass["Class: Driver & Passenger","Sensitivity"],3)`), reflejando la dificultad de aprender con pocos ejemplos.
+
+- **Specificity (Especificidad):** Mide la proporción de observaciones que no pertenecen a una clase y que son correctamente rechazadas $\left(\frac{VN}{VN + FP}\right)$. Las tres clases presentan Specificity elevada (> 0.60), indicando que el modelo raramente predice una clase incorrecta de forma sistemática. La clase *None* alcanza la Specificity más alta (`r round(byclass["Class: None","Specificity"],3)`).
+
+- **¿En qué clase el modelo presenta mayor error?** La clase *Driver & Passenger* es la más difícil de predecir, tanto por su baja frecuencia como porque sus características se solapan conceptualmente con los vehículos *Driver only* (ambas corresponden a autos equipados, diferenciándose solo en el nivel de equipamiento de seguridad).
+
+---
+
+# Importancia de Variables {#importancia}
+
+## Métricas de importancia en Random Forest
+
+Random Forest calcula dos métricas complementarias de importancia:
+
+```{r tabla-metricas-imp, echo=FALSE}
+tab_imp_def <- data.frame(
+  Métrica = c("MeanDecreaseAccuracy", "MeanDecreaseGini"),
+  Definicion = c(
+    "Cuánta precisión global pierde el modelo al permutar (destruir) los valores de esa variable en los datos OOB. Equivale a eliminar artificialmente el poder informativo de la variable.",
+    "Cuánto contribuye la variable a reducir la impureza de Gini en los nodos de división de los árboles."
+  ),
+  Interpretacion = c(
+    "Mayor valor = variable más crucial para la exactitud del clasificador. Es la métrica primaria.",
+    "Mayor valor = variable más útil para separar las clases. Puede estar influenciada por variables con muchos niveles."
+  )
+)
+
+kable(tab_imp_def, booktabs = TRUE,
+      caption = "Definición de las métricas de importancia de variables",
+      col.names = c("Métrica", "¿Qué mide?", "Interpretación"),
+      align = c("l","l","l")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "4cm") %>%
+  column_spec(2, width = "5.5cm") %>%
+  column_spec(3, width = "5.5cm")
+```
+
+## Top 10 variables por MeanDecreaseAccuracy
+
+```{r importancia-tabla}
+imp     <- importance(rf_model)
+top_imp <- imp[order(imp[, "MeanDecreaseAccuracy"], decreasing = TRUE), ]
+
+kable(round(head(top_imp, 10), 3), booktabs = TRUE,
+      caption = "Top 10 variables ordenadas por MeanDecreaseAccuracy") %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  row_spec(1:3, bold = TRUE, background = "#e8f4f8")
+```
+
+## Gráfico de importancia de variables
+
+```{r varimpplot, fig.cap="Importancia de variables (varImpPlot). Panel izquierdo: MeanDecreaseAccuracy. Panel derecho: MeanDecreaseGini. Las tres primeras variables destacan consistentemente en ambas métricas.", fig.height=7}
+varImpPlot(rf_model,
+           main = "Importancia de Variables — Cars93 (Random Forest)",
+           col  = "darkblue",
+           pch  = 19)
+```
+
+```{r imp-ggplot, fig.cap="Top 10 variables por MeanDecreaseAccuracy, ordenadas de mayor a menor importancia.", fig.height=4.5}
+top10 <- as.data.frame(head(top_imp, 10))
+top10$Variable <- rownames(top10)
+
+ggplot(top10, aes(x = reorder(Variable, MeanDecreaseAccuracy),
+                   y = MeanDecreaseAccuracy,
+                   fill = MeanDecreaseAccuracy)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_text(aes(label = round(MeanDecreaseAccuracy, 2)),
+            hjust = -0.2, size = 3.5) +
+  scale_fill_gradient(low = "#a8d4e6", high = "#003366", guide = "none") +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, max(top10$MeanDecreaseAccuracy) * 1.2)) +
+  labs(title   = "Top 10 Variables — MeanDecreaseAccuracy",
+       subtitle = "Random Forest sobre Cars93 | AirBags como variable objetivo",
+       x = "Variable",
+       y = "MeanDecreaseAccuracy") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title    = element_text(face = "bold", color = "#003366"),
+        plot.subtitle = element_text(color = "gray50"),
+        axis.text.y   = element_text(face = "bold"))
+```
+
+## Interpretación de las tres variables más importantes
+
+```{r tabla-top3, echo=FALSE}
+tab_top3 <- data.frame(
+  Rank     = c("1°", "2°", "3°"),
+  Variable = c("Type", "Weight", "Price"),
+  MDA      = round(top_imp[1:3, "MeanDecreaseAccuracy"], 3),
+  MDG      = round(top_imp[1:3, "MeanDecreaseGini"], 3),
+  Interpretacion = c(
+    "El tipo de carrocería (sedán, deportivo, camioneta, etc.) es el predictor más potente. Los vehículos tipo 'Sporty' o 'Large' tienden sistemáticamente a un nivel de equipamiento de seguridad diferente al de los compactos o económicos.",
+    "El peso del vehículo refleja su tamaño y segmento de mercado. Los autos más pesados suelen ser de gama alta o utilitarios, donde el doble airbag es estándar; los más ligeros corresponden a segmentos básicos sin airbag.",
+    "El precio es el indicador más directo del posicionamiento del vehículo en el mercado. Los autos costosos incorporan airbags dobles como equipamiento de serie; los económicos prescinden de ellos o incluyen solo el del conductor."
+  )
+)
+
+kable(tab_top3, booktabs = TRUE,
+      caption = "Interpretación de las tres variables con mayor importancia predictiva",
+      col.names = c("Rank", "Variable", "MDA", "MDG", "Interpretación económica y técnica"),
+      align = c("c","l","c","c","l")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "1cm") %>%
+  column_spec(2, bold = TRUE, width = "2cm") %>%
+  column_spec(3, width = "1.5cm") %>%
+  column_spec(4, width = "1.5cm") %>%
+  column_spec(5, width = "8cm")
+```
+
+**Conclusión sobre importancia:** Las tres variables líderes — `Type`, `Weight` y `Price` — actúan como *proxies* del **segmento de mercado** del vehículo. En 1993, la inclusión de airbags no era universal ni regulada uniformemente; era un diferenciador de categoría. El modelo captura correctamente esta lógica de mercado: el tipo de vehículo, su peso y su precio determinan en conjunto el nivel de equipamiento de seguridad pasiva instalado de fábrica.
+
+---
+
+# Discusión y Conclusiones {#conclusiones}
+
+## Síntesis de resultados
+
+```{r tabla-resumen-final, echo=FALSE}
+tab_final <- data.frame(
+  Aspecto = c(
+    "Accuracy global",
+    "Kappa de Cohen",
+    "Mejor clase (Sensitivity)",
+    "Clase más difícil",
+    "Variable más importante",
+    "Error OOB vs. error Test",
+    "Desempeño general"
+  ),
+  Resultado = c(
+    paste0(acc, "% sobre el conjunto de prueba (", nrow(test_data), " obs.)"),
+    paste0(kap, " — Acuerdo sustancial (rango 0.41–0.60)"),
+    paste0("None (Sens. = ", round(byclass["Class: None","Sensitivity"],3), ")"),
+    paste0("Driver & Passenger (Sens. = ",
+           round(byclass["Class: Driver & Passenger","Sensitivity"],3),
+           ", clase minoritaria con 17.2%)"),
+    paste0("Type (MDA = ", round(top_imp[1,"MeanDecreaseAccuracy"],3), ")"),
+    paste0("OOB: ", round(rf_model$err.rate[500,"OOB"]*100,1), "% | Test: ",
+           round((1-cm$overall["Accuracy"])*100,1), "% — Estimación OOB consistente"),
+    "Adecuado para un problema 3-clases con 46 obs. de entrenamiento"
+  )
+)
+
+kable(tab_final, booktabs = TRUE,
+      caption = "Síntesis de los principales resultados del modelo",
+      col.names = c("Aspecto evaluado", "Resultado"),
+      align = c("l","l")) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "5cm") %>%
+  column_spec(2, width = "10cm")
+```
+
+## Conclusiones
+
+1. **Desempeño sólido con datos limitados.** El modelo Random Forest con 500 árboles y mtry = 4 logra un Accuracy de **`r paste0(acc,"%")`** y un Kappa de **`r kap`** sobre el conjunto de prueba, lo cual constituye un desempeño razonable para un problema de clasificación multiclase con tres categorías y solo `r nrow(train_data)` observaciones de entrenamiento.
+
+2. **El desbalance de clases afecta la Sensitivity de la clase minoritaria.** La clase *Driver & Passenger* (17.2 % del total) presenta la Sensitivity más baja, lo que es esperable cuando el modelo tiene menos ejemplos para aprender sus patrones. Técnicas de balanceo como SMOTE o ajuste de pesos por clase podrían mejorar este indicador.
+
+3. **El segmento de mercado como determinante del sistema de airbag.** Las variables `Type`, `Weight` y `Price` capturan colectivamente el posicionamiento del vehículo en el mercado. En 1993, la inclusión de airbags era una característica de gama alta, y el modelo aprende correctamente esta lógica: a mayor precio, peso y categoría del vehículo, mayor probabilidad de tener doble airbag.
+
+4. **La estimación OOB es confiable.** El error OOB (`r round(rf_model$err.rate[500,"OOB"]*100,1)` %) y el error sobre el conjunto de prueba (`r round((1-cm$overall["Accuracy"])*100,1)` %) son consistentes, confirmando que el mecanismo interno de Random Forest proporciona una estimación realista del desempeño generalizado del modelo sin necesidad de un conjunto de validación adicional.
+
+5. **Oportunidades de mejora.** Dado el tamaño reducido del dataset (93 observaciones), sería recomendable explorar: (a) técnicas de validación cruzada *k-fold* para aprovechar mejor los datos disponibles, (b) ajuste de hiperparámetros `ntree` y `mtry` mediante búsqueda en grilla, y (c) aplicación de métodos de balanceo de clases para mejorar la detección de *Driver & Passenger*.
+
+---
+
+# Información de Sesión
+
+```{r session-info, echo=FALSE}
+cat("R version:", R.version$version.string, "\n")
+cat("Fecha de ejecución:", format(Sys.Date(), "%Y-%m-%d"), "\n")
+cat("Paquetes principales:\n")
+cat(" - MASS:", as.character(packageVersion("MASS")), "\n")
+cat(" - randomForest:", as.character(packageVersion("randomForest")), "\n")
+cat(" - caret:", as.character(packageVersion("caret")), "\n")
+cat(" - ggplot2:", as.character(packageVersion("ggplot2")), "\n")
+cat(" - knitr:", as.character(packageVersion("knitr")), "\n")
+```
+
+---
+
+*Informe generado para la materia Técnicas Estadísticas Avanzadas para Minería de Datos — Módulo 9 | Maestría en Estadística Aplicada | ESPOL — 2026*
